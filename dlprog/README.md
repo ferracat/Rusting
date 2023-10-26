@@ -14,3 +14,7 @@ As a nice thing to have, multiple progress bars should be in the screen and to d
 sudo apt install libclang-dev libncursesw5 libncursesw5-dev
 ``` 
 
+## Documentation
+```bash
+cargo doc --open
+```

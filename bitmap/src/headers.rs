@@ -16,6 +16,12 @@ impl fmt::LowerHex for FileHeader {
     }
 }
 
+impl fmt::UpperHex for FileHeader {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:x}{:x}{:x}{:x}{:x}", self.file_type, self.size, self.reserved1, self.reserved2, self.start_offset)
+    }
+}
+
 impl FileHeader {
     pub fn new() -> FileHeader {
         FileHeader {

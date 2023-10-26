@@ -26,6 +26,7 @@ fn main() {
     let mut file_header = headers::FileHeader::new();
     println!("[DEBUG] file_header.size = {}", file_header.size);
     println!("[DEBUG] file_header\n{:#?}", file_header);
+    println!("[DEBUG] file_header\n{:X}", file_header);
 
     // --> Bitmap information header (40 bytes)
     let bmp_info_header = headers::BitmapInformationHeader::new();
