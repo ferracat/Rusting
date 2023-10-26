@@ -16,6 +16,15 @@ if [ -d "$HOME/.cargo/bin" ] && ! grep -Eq "(^|:)$HOME/.cargo/bin($|:)" <<<$PATH
 fi
 ```
 
+#### Install debugger
+```bash
+sudo apt install lldb
+cd $(dirname $(which lldb))
+sudo ln -s lldb-vscode-* lldb-vscode
+```
+
+> Check health of helix editor --> `hx --health rust`
+ 
 ---
 
 The links will be added automatically but in any case the following can be done.

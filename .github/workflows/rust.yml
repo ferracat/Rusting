@@ -1,0 +1,50 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Build project "bitmap"
+      run: cargo build --verbose
+      working-directory: bitmap
+      
+    - name: Run tests for "bitmap"
+      run: cargo test --verbose
+      working-directory: bitmap
+      
+    - name: Build project "dlprog"
+      run: cargo build --verbose
+      working-directory: dlprog
+      
+    - name: Run tests for "dlprog"
+      run: cargo test --verbose
+      working-directory: dlprog
+      
+    - name: Build project "reverse"
+      run: cargo build --verbose
+      working-directory: reverse
+      
+    - name: Run tests for "reverse"
+      run: cargo test --verbose
+      working-directory: reverse
+
+    - name: Build project "to-do"
+      run: cargo build --verbose
+      working-directory: to-do
+      
+    - name: Run tests for "to-do"
+      run: cargo test --verbose
+      working-directory: to-do
