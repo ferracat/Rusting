@@ -2,6 +2,9 @@ Rusting
 ============
 Rust language learning projects
 
+There is a command line Rust book that has some interesting code examples: 
+> https://github.com/kyclark/command-line-rust
+
 ## Installation
 The easyest way to install the rust build environment is by running the following command:
 ```bash
@@ -24,7 +27,7 @@ sudo ln -s lldb-vscode-* lldb-vscode
 ```
 
 > Check health of helix editor --> `hx --health rust`
- 
+
 ---
 
 The links will be added automatically but in any case the following can be done.
