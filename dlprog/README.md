@@ -10,6 +10,8 @@ As a nice thing to have, multiple progress bars should be in the screen and to d
 * libncursesw5
 * libncursesw5-dev
 
+> https://docs.rs/ncursesw/latest/ncursesw/type.WINDOW.html
+
 ```bash
 sudo apt install libclang-dev libncursesw5 libncursesw5-dev
 ``` 
@@ -18,3 +20,8 @@ sudo apt install libclang-dev libncursesw5 libncursesw5-dev
 ```bash
 cargo doc --open
 ```
+
+---
+
+### Useful links
+* https://mike42.me/blog/2018-06-make-better-cli-progress-bars-with-unicode-block-characters
