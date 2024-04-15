@@ -1,12 +1,10 @@
 [package]
-name = "ssh_config"
+name = "ssh-config"
 version = "0.1.0"
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#cursive = "0.20.0"
-dirs = "3.0"
-lazy_static = "1.4.0"
-ssh_config = "0.1.0"
+shellexpand = "3.1.0"
+regex = "1.10.4"
