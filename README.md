@@ -2,6 +2,10 @@ Rusting
 ============
 Rust language learning projects
 
+> [crates](https://crates.io)
+
+---
+
 There is a command line Rust book that has some interesting code examples: 
 > https://github.com/kyclark/command-line-rust
 

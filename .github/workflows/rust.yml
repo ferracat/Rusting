@@ -24,6 +24,7 @@ jobs:
     - name: Run tests for "bitmap"
       run: cargo test --verbose
       working-directory: bitmap
+
       
     - name: Build project "dlprog"
       run: cargo build --verbose
@@ -32,6 +33,7 @@ jobs:
     - name: Run tests for "dlprog"
       run: cargo test --verbose
       working-directory: dlprog
+
       
     - name: Build project "reverse"
       run: cargo build --verbose
@@ -41,6 +43,7 @@ jobs:
       run: cargo test --verbose
       working-directory: reverse
 
+
     - name: Build project "to-do"
       run: cargo build --verbose
       working-directory: to-do
@@ -48,3 +51,12 @@ jobs:
     - name: Run tests for "to-do"
       run: cargo test --verbose
       working-directory: to-do
+
+
+    - name: Build project "ssh-config"
+      run: cargo build --verbose
+      working-directory: ssh-config
+  
+    - name: Run tests for "ssh-config"
+      run: cargo test --verbose
+      working-directory: ssh-config

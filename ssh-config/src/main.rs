@@ -1,4 +1,5 @@
-mod config;  // This line tells Rust to include the `config.rs` file as a module
+mod config;
+mod entry;  // This line tells Rust to include the `config.rs` file as a module
 
 fn main() {
     let home_dir = shellexpand::tilde("~").into_owned();
@@ -13,8 +14,8 @@ fn main() {
                 for (key, value) in entry.options {
                     println!("  {} => {}", key, value);
                 }
-                for (comment) in entry.comments {
-                    println!("  // {}", comment);
+                for comment in entry.comments {
+                    println!("  Comment: {}", comment);
                 }
                 let tag_display = entry.tag.as_ref().map_or("None", String::as_str);
                 println!("  Tag: {}", tag_display);            }
