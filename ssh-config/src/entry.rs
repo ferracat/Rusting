@@ -8,6 +8,13 @@ pub struct SshConfigEntry {
 }
 
 impl SshConfigEntry {
+    pub fn add_option(&mut self, key: String, value: String) {
+        self.options.push((key, value));
+    }
+
+    pub fn add_comment(&mut self, comment: String) {
+        self.comments.push(comment);
+    }
 
     pub fn set_tag(&mut self, tag: String) {
         self.tag = Some(tag);
