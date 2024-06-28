@@ -1,8 +1,18 @@
+//! This module has functions to handle the reading and writing of the configuration file
+
 use regex::Regex;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use crate::entry::SshConfigEntry;
 
+
+/// Reads and parses the SSH config file at the given path.
+///
+/// # Arguments
+/// * `path` - The path to the SSH config file.
+///
+/// # Returns
+/// A vector of `SshConfigEntry` structs parsed from the file.
 pub fn read_ssh_config(path: &str) -> io::Result<Vec<SshConfigEntry>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
