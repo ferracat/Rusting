@@ -2,7 +2,16 @@ mod config;
 mod entry;  // This line tells Rust to include the `config.rs` file as a module
 
 use crossterm;
-use tui;
+use crossterm::{event, terminal};
+use crossterm::event::{Event, KeyCode, KeyEvent, MouseEvent};
+use ratatui as tui;
+use tui::{
+    style::Color,
+    style::Style,
+    text,
+    widgets,
+    layout,
+};
 
 // fn main() {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -51,49 +60,100 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error::Error>> {
     // Setup terminal
-    crossterm::terminal::enable_raw_mode();
+    // This returns a value. The .unwrap() is used to get it out and ignore it so that the build warning is cleared
+    // It can cause the program to panic in case of error.
+    //crossterm::terminal::enable_raw_mode().unwrap();
+    // To better handle and propagate the result the following is advised -> ?
+    terminal::enable_raw_mode()?;
 
     let mut stdout = std::io::stdout();
-    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+    crossterm::execute!(stdout, terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
     let backend = tui::backend::CrosstermBackend::new(stdout);
     let mut terminal = tui::Terminal::new(backend)?;
 
     // Create the list of hostnames
-    let hosts: Vec<tui::widgets::ListItem> = entries
+    let hosts: Vec<widgets::ListItem> = entries
         .iter()
         .map(|entry| {
-            tui::widgets::ListItem::new(tui::text::Spans::from(tui::text::Span::raw(&entry.host)))
-                .style(tui::style::Style::default().fg(tui::style::Color::White))
+            widgets::ListItem::new(text::Span::raw(&entry.host))
+                .style(Style::default().fg(Color::White))
         })
         .collect();
+
+    let mut list_state = widgets::ListState::default();
+    if !hosts.is_empty() {
+        list_state.select(Some(0));
+    }
 
     // Main loop
     loop {
         terminal.draw(|f| {
             let size = f.size();
-            let chunks = tui::layout::Layout::default()
-                .direction(tui::layout::Direction::Vertical)
+            let chunks = layout::Layout::default()
+                .direction(layout::Direction::Vertical)
                 .margin(1)
-                .constraints([tui::layout::Constraint::Percentage(100)].as_ref())
+                .constraints([layout::Constraint::Percentage(100)].as_ref())
                 .split(size);
 
-            let list = tui::widgets::List::new(hosts.clone())
-                .block(tui::widgets::Block::default().borders(tui::widgets::Borders::ALL).title(" SSH Hosts "))
-                .highlight_style(tui::style::Style::default().fg(tui::style::Color::Yellow))
+            let list = widgets::List::new(hosts.clone())
+                .block(widgets::Block::default().borders(widgets::Borders::ALL).title(" SSH Hosts "))
+                .highlight_style(Style::default().fg(Color::Yellow))
                 .highlight_symbol(">> ");
 
-            f.render_widget(list, chunks[0]);
+            f.render_stateful_widget(list, chunks[0], &mut list_state);
         })?;
 
-        if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
-            if key.code == crossterm::event::KeyCode::Char('q') {
-                break;
+        if let Event::Key(key) = crossterm::event::read()? {
+            match key {
+                KeyEvent { code: KeyCode::Char('q'), .. } => break,
+                KeyEvent { code: KeyCode::Down, .. } => {
+                    let i = match list_state.selected() {
+                        Some(i) => {
+                            if i >= hosts.len() - 1 {
+                                0
+                            } else {
+                                i + 1
+                            }
+                        }
+                        None => 0,
+                    };
+                    list_state.select(Some(i));
+                }
+                KeyEvent { code: KeyCode::Up, .. } => {
+                    let i = match list_state.selected() {
+                        Some(i) => {
+                            if i == 0 {
+                                hosts.len() - 1
+                            } else {
+                                i - 1
+                            }
+                        }
+                        None => 0,
+                    };
+                    list_state.select(Some(i));
+                }
+                _ => {}
+            }
+        }
+
+        if let crossterm::event::Event::Mouse(mouse_event) = event::read()? {
+            match mouse_event {
+                crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::Down(_),
+                    row, ..
+                } => {
+                    let list_start = 2;
+                    if row >= list_start && row < list_start + hosts.len() as u16 {
+                        list_state.select(Some((row - list_start) as usize));
+                    }
+                }
+                _ => {}
             }
         }
     }
 
     // Restore terminal
-    crossterm::terminal::disable_raw_mode()?;
+    terminal::disable_raw_mode()?;
     crossterm::execute!(
         terminal.backend_mut(),
         crossterm::terminal::LeaveAlternateScreen,
