@@ -96,58 +96,62 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                 .split(size);
 
             let list = widgets::List::new(hosts.clone())
-                .block(widgets::Block::default().borders(widgets::Borders::ALL).title(" SSH Hosts "))
+                .block(widgets::Block::default()
+                    .borders(widgets::Borders::ALL)
+                    .title(" SSH Hosts ")
+                    .border_style(Style::default().fg(Color::Blue))
+                    .title_style(Style::default().fg(Color::Blue))
+                )
                 .highlight_style(Style::default().fg(Color::Yellow))
                 .highlight_symbol(">> ");
 
             f.render_stateful_widget(list, chunks[0], &mut list_state);
         })?;
 
-        if let Event::Key(key) = crossterm::event::read()? {
-            match key {
-                KeyEvent { code: KeyCode::Char('q'), .. } => break,
-                KeyEvent { code: KeyCode::Down, .. } => {
-                    let i = match list_state.selected() {
-                        Some(i) => {
-                            if i >= hosts.len() - 1 {
-                                0
-                            } else {
-                                i + 1
+        if event::poll(std::time::Duration::from_millis(100))? {
+            if let Event::Key(key) = crossterm::event::read()? {
+                match key.code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Down => {
+                        let i = match list_state.selected() {
+                            Some(i) => {
+                                if i >= hosts.len() - 1 {
+                                    0
+                                } else {
+                                    i + 1
+                                }
                             }
-                        }
-                        None => 0,
-                    };
-                    list_state.select(Some(i));
-                }
-                KeyEvent { code: KeyCode::Up, .. } => {
-                    let i = match list_state.selected() {
-                        Some(i) => {
-                            if i == 0 {
-                                hosts.len() - 1
-                            } else {
-                                i - 1
-                            }
-                        }
-                        None => 0,
-                    };
-                    list_state.select(Some(i));
-                }
-                _ => {}
-            }
-        }
-
-        if let crossterm::event::Event::Mouse(mouse_event) = event::read()? {
-            match mouse_event {
-                crossterm::event::MouseEvent {
-                    kind: crossterm::event::MouseEventKind::Down(_),
-                    row, ..
-                } => {
-                    let list_start = 2;
-                    if row >= list_start && row < list_start + hosts.len() as u16 {
-                        list_state.select(Some((row - list_start) as usize));
+                            None => 0,
+                        };
+                        list_state.select(Some(i));
                     }
+                    KeyCode::Up => {
+                        let i = match list_state.selected() {
+                            Some(i) => {
+                                if i == 0 {
+                                    hosts.len() - 1
+                                } else {
+                                    i - 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        list_state.select(Some(i));
+                    }
+                    _ => {}
                 }
-                _ => {}
+            }
+
+            if let Event::Mouse(mouse_event) = event::read()? {
+                match mouse_event.kind {
+                    event::MouseEventKind::Down(_) => {
+                        let list_start = 2;
+                        if mouse_event.row >= list_start && mouse_event.row < list_start + hosts.len() as u16 {
+                            list_state.select(Some((mouse_event.row - list_start) as usize));
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -156,8 +160,8 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     terminal::disable_raw_mode()?;
     crossterm::execute!(
         terminal.backend_mut(),
-        crossterm::terminal::LeaveAlternateScreen,
-        crossterm::event::DisableMouseCapture
+        terminal::LeaveAlternateScreen,
+        event::DisableMouseCapture
     )?;
     terminal.show_cursor()?;
 
