@@ -10,3 +10,11 @@ shellexpand = "3.1.0"
 regex = "1.10.4"
 crossterm = "0.27.0"
 ratatui = "0.27.0"
+simplelog = "0.12.2"
+log = "0.4.22"
+
+
+[profile.release]
+lto = true
+opt-level = "s"
+panic = "abort"

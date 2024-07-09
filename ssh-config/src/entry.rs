@@ -8,7 +8,7 @@ use std::fmt;
 /// * options (Hash Map)
 /// * comments (Vector)
 /// * tag
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SshConfigEntry {
     pub host: String,
     pub options: Vec<(String, String)>,
