@@ -76,5 +76,6 @@ pub enum SshOption {
     User(String),
     Port(u16),
     IdentityFile(String),
+    StrictHostKeyChecking(bool),
     // TODO: Add the other options
 }

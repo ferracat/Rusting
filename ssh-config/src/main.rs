@@ -24,6 +24,7 @@ use ratatui::widgets::ListState;
 // ::{trace, debug, info, warn, error};
 
 // THREADS
+use std::sync::{Arc, Mutex};
 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -102,79 +103,102 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     let backend = tui::backend::CrosstermBackend::new(stdout);
     let mut terminal = tui::Terminal::new(backend)?;
 
-    // Create the list of hostnames
-    let hosts: Vec<widgets::ListItem> = entries
-        .iter()
-        .map(|entry| {
-            widgets::ListItem::new(text::Span::raw(entry.host.clone()))
-                .style(Style::default().fg(Color::White))
-        })
-        .collect();
+    // Create the list of hostnames and wrap it in Arc and Mutex (Atomic Reference Counted smart pointer with a mutex for safe access across threads)
+    let hosts = Arc::new(Mutex::new(
+        entries.iter()
+            .map(|entry| {
+                widgets::ListItem::new(text::Span::raw(entry.host.clone()))
+                    .style(Style::default().fg(Color::White))
+            })
+            .collect::<Vec<widgets::ListItem>>(),
+    ));
 
     let mut list_state = widgets::ListState::default();
-    if !hosts.is_empty() {
-        list_state.select(Some(0));
+
+    // Lock the mutex to access the vector and check if it's empty
+    if let Ok(hosts_guard) = hosts.lock() {
+        if !hosts_guard.is_empty() {
+            list_state.select(Some(0));
+        }
+    } else {
+        // Handle the case where locking fails (optional)
+        log::error!("Failed to acquire lock on hosts");
     }
 
     // Create a channel to communicate between the event handler thread and the main thread
     let (tx, rx) = mpsc::channel();
+
+    // Clone `hosts` for the thread and main loop
+    let hosts_thread = Arc::clone(&hosts);
+    let hosts_main = Arc::clone(&hosts);
+
 
     // Spawn a thread to handle events
     let tx_clone = tx.clone();
     let entries_clone = entries.clone();
     thread::spawn(move || {
         let mut list_state = ListState::default();
-        if !entries_clone.is_empty() {
-            list_state.select(Some(0));
+        {
+            // Lock the mutex to access `hosts` safely
+            let hosts = hosts_thread.lock().unwrap();
+            if !hosts.is_empty() {
+                list_state.select(Some(0));
+            }
         }
+
         loop {
             if event::poll(Duration::from_secs(0)).unwrap() {
                 if let Ok(event) = event::read() {
                     match event {
                         Event::Key(key) => {
-                            let selected_index = match key.code {
-                                KeyCode::Down => {
-                                    log::debug!("Down Key pressed!");
-                                    let i = match list_state.selected() {
-                                        Some(i) => {
-                                            if i >= hosts.len() - 1 {
-                                                0
-                                            } else {
-                                                i + 1
+                            let selected_index = {
+                                // Lock the mutex to access `hosts` safely
+                                let hosts = hosts_thread.lock().unwrap();
+
+                                match key.code {
+                                    KeyCode::Down => {
+                                        log::debug!("Down Key pressed!");
+                                        let i = match list_state.selected() {
+                                            Some(i) => {
+                                                if i >= hosts.len() - 1 {
+                                                    0
+                                                } else {
+                                                    i + 1
+                                                }
                                             }
-                                        }
-                                        None => 0,
-                                    };
-                                    Some(i)
-                                }
-                                KeyCode::Up => {
-                                    log::debug!("Up Key pressed!");
-                                    let i = match list_state.selected() {
-                                        Some(i) => {
-                                            if i == 0 {
-                                                hosts.len() - 1
-                                            } else {
-                                                i - 1
-                                            }
-                                        }
-                                        None => 0,
-                                    };
-                                    Some(i)
-                                }
-                                KeyCode::Char('q') => {
-                                    log::debug!("'q' Key pressed!");
-                                    tx_clone.send(UIEvent::Input(event)).unwrap();
-                                    return;
-                                }
-                                KeyCode::Enter => {
-                                    log::debug!("Enter Key pressed!");
-                                    log::debug!("list_state.selected() = {:?}", list_state.selected());
-                                    if let Some(selected) = list_state.selected() {
-                                        log::info!("\n{}", &entries[selected]);
+                                            None => 0,
+                                        };
+                                        Some(i)
                                     }
-                                    None
+                                    KeyCode::Up => {
+                                        log::debug!("Up Key pressed!");
+                                        let i = match list_state.selected() {
+                                            Some(i) => {
+                                                if i == 0 {
+                                                    hosts.len() - 1
+                                                } else {
+                                                    i - 1
+                                                }
+                                            }
+                                            None => 0,
+                                        };
+                                        Some(i)
+                                    }
+                                    KeyCode::Char('q') => {
+                                        log::debug!("'q' Key pressed!");
+                                        tx_clone.send(UIEvent::Input(event)).unwrap();
+                                        return;
+                                    }
+                                    KeyCode::Enter => {
+                                        log::debug!("Enter Key pressed!");
+                                        log::debug!("list_state.selected() = {:?}", list_state.selected());
+                                        if let Some(selected) = list_state.selected() {
+                                            log::info!("\n{}", &entries[selected]);
+                                        }
+                                        None
+                                    }
+                                    _ => None,
                                 }
-                                _ => None,
                             };
 
                             if let Some(index) = selected_index {
@@ -185,6 +209,10 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                         Event::Mouse(mouse_event) => {
                             if let event::MouseEventKind::Down(_) = mouse_event.kind {
                                 let list_start = 2;
+
+                                // Lock the mutex to access `hosts`
+                                let hosts = hosts_thread.lock().unwrap();
+
                                 if mouse_event.row >= list_start && mouse_event.row < list_start + hosts.len() as u16 {
                                     let index = (mouse_event.row - list_start) as usize;
                                     tx_clone.send(UIEvent::UpdateSelection(index)).unwrap();
@@ -207,6 +235,9 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                 .margin(1)
                 .constraints([layout::Constraint::Percentage(100)].as_ref())
                 .split(size);
+
+            // Lock the mutex and clone the hosts vector
+            let hosts = hosts_main.lock().unwrap();
 
             let list = widgets::List::new(hosts.clone())
                 .block(widgets::Block::default()
