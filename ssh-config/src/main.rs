@@ -1,5 +1,7 @@
 mod config;
 mod entry;  // This line tells Rust to include the `config.rs` file as a module
+mod terminal_utils;
+use terminal_utils::{setup_terminal, restore_terminal, TerminalManager};
 mod app;
 use app::AppMode; // Bring AppMode into scope
 
@@ -31,25 +33,11 @@ use std::thread;
 use std::thread::sleep;
 
 // SIGNAL
-use ctrlc;
+use signal_hook::consts::SIGINT;
+use signal_hook::iterator::Signals;
 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-
-    // Shared flag to indicate unsaved changes
-    let has_changes = Arc::new(AtomicBool::new(false));
-
-    // Set up the Ctrl+C handler to check `has_changes` and exit
-    let has_changes_clone = Arc::clone(&has_changes);
-    ctrlc::set_handler(move || {
-        if has_changes_clone.load(Ordering::SeqCst) {
-            log::debug!("There are unsaved changes!");
-        } else {
-            log::debug!("No unsaved changes.");
-        }
-        process::exit(1);
-    }).expect("Error setting Ctrl+C handler");
-
 
     // Initialize logging
     simplelog::CombinedLogger::init(vec![
@@ -154,20 +142,52 @@ where
 
 
 fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error::Error>> {
-    // Setup terminal
-    // This returns a value. The .unwrap() is used to get it out and ignore it so that the build warning is cleared
-    // It can cause the program to panic in case of error.
-    //crossterm::terminal::enable_raw_mode().unwrap();
-    // To better handle and propagate the result the following is advised -> ?
-    terminal::enable_raw_mode()?;
+
+    // Set up signal handling for SIGINT (Ctrl+C)
+    let mut signals = Signals::new(&[SIGINT]).expect("Failed to set up signals");
+
+    // Shared flag to indicate unsaved changes
+    let has_changes = Arc::new(AtomicBool::new(false));
+
+    // Set up signal handling for SIGINT (Ctrl+C) in a separate thread
+    let has_changes_clone = Arc::clone(&has_changes);
+    thread::spawn(move || {
+        for signal in &mut signals {
+            if signal == SIGINT {
+                if has_changes_clone.load(Ordering::SeqCst) {
+                    log::debug!("Ctrl+C pressed. There are unsaved changes!");
+                } else {
+                    log::debug!("Ctrl+C pressed. No unsaved changes.");
+                }
+                println!("Exiting gracefully...");
+                process::exit(1);  // Exit immediately with code 1
+            }
+        }
+    });
+
 
     // Use AppMode within this function
     let mut app_mode = AppMode::Normal;
 
-    let mut stdout = std::io::stdout();
-    crossterm::execute!(stdout, terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
-    let backend = tui::backend::CrosstermBackend::new(stdout);
-    let mut terminal = tui::Terminal::new(backend)?;
+    let mut terminal_manager = TerminalManager::new(std::io::stdout())?;
+
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // // Setup terminal
+    // // This returns a value. The .unwrap() is used to get it out and ignore it so that the build warning is cleared
+    // // It can cause the program to panic in case of error.
+    // //crossterm::terminal::enable_raw_mode().unwrap();
+    // // To better handle and propagate the result the following is advised -> ?
+    // terminal::enable_raw_mode()?;
+    //
+    // let mut stdout = std::io::stdout();
+    // crossterm::execute!(stdout, terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+    // let backend = tui::backend::CrosstermBackend::new(stdout);
+    // let mut terminal = tui::Terminal::new(backend)?;
+    // -----------------------------------------------------------------------------------------------------------------
+
+    // Instantiate TerminalManager, which automatically sets up the terminal
+    let mut terminal_manager = TerminalManager::new(std::io::stdout())?;
 
     // Create the list of hostnames and wrap it in Arc and Mutex (Atomic Reference Counted smart pointer with a mutex for safe access across threads)
     let hosts = Arc::new(Mutex::new(
@@ -311,7 +331,7 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
 
     // --- Main loop -------------------------------------------------------------------------------
     loop {
-        terminal.draw(|f| {
+        terminal_manager.draw(|f| {
             let size = f.size();
             let chunks = layout::Layout::default()
                 .direction(layout::Direction::Vertical)
@@ -371,14 +391,14 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
         sleep(Duration::from_millis(10));
     }
 
-    // Restore terminal
-    terminal::disable_raw_mode()?;
-    crossterm::execute!(
-        terminal.backend_mut(),
-        terminal::LeaveAlternateScreen,
-        event::DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    // // Restore terminal
+    // terminal::disable_raw_mode()?;
+    // crossterm::execute!(
+    //     terminal.backend_mut(),
+    //     terminal::LeaveAlternateScreen,
+    //     event::DisableMouseCapture
+    // )?;
+    // terminal.show_cursor()?;
 
     Ok(())
 }
