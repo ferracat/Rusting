@@ -1,7 +1,10 @@
 mod config;
 mod entry;  // This line tells Rust to include the `config.rs` file as a module
+mod app;
+use app::AppMode; // Bring AppMode into scope
 
 use std::time::Duration;
+use std::process;
 
 // TUI
 use crossterm;
@@ -23,12 +26,30 @@ use log;
 // ::{trace, debug, info, warn, error};
 
 // THREADS
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::thread;
 use std::thread::sleep;
 
+// SIGNAL
+use ctrlc;
+
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+    // Shared flag to indicate unsaved changes
+    let has_changes = Arc::new(AtomicBool::new(false));
+
+    // Set up the Ctrl+C handler to check `has_changes` and exit
+    let has_changes_clone = Arc::clone(&has_changes);
+    ctrlc::set_handler(move || {
+        if has_changes_clone.load(Ordering::SeqCst) {
+            log::debug!("There are unsaved changes!");
+        } else {
+            log::debug!("No unsaved changes.");
+        }
+        process::exit(1);
+    }).expect("Error setting Ctrl+C handler");
+
 
     // Initialize logging
     simplelog::CombinedLogger::init(vec![
@@ -90,6 +111,8 @@ enum UIEvent {
     Input(Event),
     UpdateSelection(usize),
     Exit, // Exit event to stop the program by breaking from the main loop
+    Search, // Search event to enter the search mode
+    Normal, // Normal event to enter the normal mode
 }
 
 
@@ -137,6 +160,9 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     //crossterm::terminal::enable_raw_mode().unwrap();
     // To better handle and propagate the result the following is advised -> ?
     terminal::enable_raw_mode()?;
+
+    // Use AppMode within this function
+    let mut app_mode = AppMode::Normal;
 
     let mut stdout = std::io::stdout();
     crossterm::execute!(stdout, terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
@@ -226,10 +252,22 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                                         };
                                         Some(i)
                                     }
+                                    KeyCode::Char('/') => {
+                                        // Switch to search mode
+                                        log::debug!("'/' Key pressed!");
+                                        tx_clone.send(UIEvent::Search).unwrap(); // Send a signal to enter search mode
+                                        None
+                                    }
+                                    KeyCode::Esc => {
+                                        // Exit search mode and return to normal
+                                        log::debug!("'Esc' Key pressed!");
+                                        tx_clone.send(UIEvent::Normal).unwrap(); // Send a signal to enter normal mode
+                                        None
+                                    }
                                     KeyCode::Char('q') => {
                                         log::debug!("'q' Key pressed!");
                                         tx_clone.send(UIEvent::Exit).unwrap(); // Send an exit signal
-                                        return;
+                                        None
                                     }
                                     KeyCode::Enter => {
                                         log::debug!("Enter Key pressed!");
@@ -304,10 +342,22 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
         // Handle events from the channel
         if let Ok(ui_event) = rx.recv_timeout(Duration::from_secs(0)) {
             match ui_event {
-                UIEvent::Input(Event::Key(KeyEvent { code: KeyCode::Char('q'), .. })) => break,
+                // UIEvent::Input(Event::Key(KeyEvent { code: KeyCode::Char('q'), .. })) => {
+                //     break;
+                // }
+                // UIEvent::Input(Event::Key(KeyEvent { code: KeyCode::Char('/'), .. })) => {
+
+                //     break;
+                // }
                 UIEvent::UpdateSelection(index) => {
                     log::debug!("Updating selection to index: {}", index);
                     set_selected_index(&list_state_main, Some(index));
+                }
+                UIEvent::Search => {
+                    log::info!("Entering search mode.");
+                }
+                UIEvent::Normal => {
+                    log::info!("Entering normal mode.");
                 }
                 UIEvent::Exit => {
                     log::info!("Exit signal received, breaking main loop.");
