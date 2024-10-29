@@ -1,7 +1,7 @@
 mod config;
 mod entry;  // This line tells Rust to include the `config.rs` file as a module
 mod terminal_utils;
-use terminal_utils::{setup_terminal, restore_terminal, TerminalManager};
+use terminal_utils::TerminalManager;
 mod app;
 use app::AppMode; // Bring AppMode into scope
 
@@ -99,6 +99,7 @@ enum UIEvent {
     Input(Event),
     UpdateSelection(usize),
     Exit, // Exit event to stop the program by breaking from the main loop
+    Exit_error, // Exit event to stop the program by breaking from the main loop when error occurs
     Search, // Search event to enter the search mode
     Normal, // Normal event to enter the normal mode
 }
@@ -143,6 +144,7 @@ where
 
 fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error::Error>> {
 
+    // --- Ctrl+C ----------------------------------------------------------------------------------
     // Set up signal handling for SIGINT (Ctrl+C)
     let mut signals = Signals::new(&[SIGINT]).expect("Failed to set up signals");
 
@@ -166,28 +168,12 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     });
 
 
-    // Use AppMode within this function
-    let mut app_mode = AppMode::Normal;
-
-    let mut terminal_manager = TerminalManager::new(std::io::stdout())?;
-
-
-    // -----------------------------------------------------------------------------------------------------------------
-    // // Setup terminal
-    // // This returns a value. The .unwrap() is used to get it out and ignore it so that the build warning is cleared
-    // // It can cause the program to panic in case of error.
-    // //crossterm::terminal::enable_raw_mode().unwrap();
-    // // To better handle and propagate the result the following is advised -> ?
-    // terminal::enable_raw_mode()?;
-    //
-    // let mut stdout = std::io::stdout();
-    // crossterm::execute!(stdout, terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
-    // let backend = tui::backend::CrosstermBackend::new(stdout);
-    // let mut terminal = tui::Terminal::new(backend)?;
-    // -----------------------------------------------------------------------------------------------------------------
-
+    // --- Terminal Manager ------------------------------------------------------------------------
     // Instantiate TerminalManager, which automatically sets up the terminal
     let mut terminal_manager = TerminalManager::new(std::io::stdout())?;
+
+    // Use AppMode within this function
+    let mut app_mode = AppMode::Normal;
 
     // Create the list of hostnames and wrap it in Arc and Mutex (Atomic Reference Counted smart pointer with a mutex for safe access across threads)
     let hosts = Arc::new(Mutex::new(
@@ -224,7 +210,7 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     let tx_clone = tx.clone();
     let entries_clone = entries.clone();
 
-    // --- thread to handle mouse and key events ---------------------------------------------------
+    // --- Thread to handle mouse and key events ---------------------------------------------------
     thread::spawn(move || {
 
         // Use the generic function 'with_mutex' to access the hosts vector
@@ -362,13 +348,6 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
         // Handle events from the channel
         if let Ok(ui_event) = rx.recv_timeout(Duration::from_secs(0)) {
             match ui_event {
-                // UIEvent::Input(Event::Key(KeyEvent { code: KeyCode::Char('q'), .. })) => {
-                //     break;
-                // }
-                // UIEvent::Input(Event::Key(KeyEvent { code: KeyCode::Char('/'), .. })) => {
-
-                //     break;
-                // }
                 UIEvent::UpdateSelection(index) => {
                     log::debug!("Updating selection to index: {}", index);
                     set_selected_index(&list_state_main, Some(index));
@@ -383,6 +362,11 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                     log::info!("Exit signal received, breaking main loop.");
                     break; // Break the loop and exit the program
                 }
+                UIEvent::Exit_error => {
+                    log::info!("Exit signal received with error code.");
+                    process::exit(1);
+                    break; // Break the loop and exit the program
+                }
                 _ => {}
             }
         }
@@ -391,14 +375,7 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
         sleep(Duration::from_millis(10));
     }
 
-    // // Restore terminal
-    // terminal::disable_raw_mode()?;
-    // crossterm::execute!(
-    //     terminal.backend_mut(),
-    //     terminal::LeaveAlternateScreen,
-    //     event::DisableMouseCapture
-    // )?;
-    // terminal.show_cursor()?;
+    // > The restore terminal will be done by the drop in **TerminalManager**
 
     Ok(())
 }

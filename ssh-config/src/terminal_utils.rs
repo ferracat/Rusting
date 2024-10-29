@@ -6,26 +6,6 @@ use ratatui as tui;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
 
-/// Sets up the terminal in raw mode and switches to the alternate screen.
-pub fn setup_terminal<W: Write>(terminal: &mut Terminal<CrosstermBackend<W>>) -> io::Result<()> {
-    terminal::enable_raw_mode()?;
-    terminal.backend_mut().execute(terminal::EnterAlternateScreen)?;
-    terminal.backend_mut().execute(event::EnableMouseCapture)?;
-    terminal.hide_cursor()?;
-    Ok(())
-}
-
-/// Restores the terminal to its normal state by disabling raw mode,
-/// leaving the alternate screen, and showing the cursor.
-pub fn restore_terminal<W: Write>(terminal: &mut Terminal<CrosstermBackend<W>>) -> io::Result<()> {
-    terminal::disable_raw_mode()?;
-    terminal.backend_mut().execute(terminal::LeaveAlternateScreen)?;
-    terminal.backend_mut().execute(event::DisableMouseCapture)?;
-    terminal.show_cursor()?;
-    Ok(())
-}
-
-
 
 pub struct TerminalManager<W: Write> {
     terminal: Terminal<CrosstermBackend<W>>,
