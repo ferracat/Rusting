@@ -1,5 +1,7 @@
 mod config;
 mod entry;  // This line tells Rust to include the `config.rs` file as a module
+mod list_utils;
+use list_utils::ListStateManager;
 mod terminal_utils;
 use terminal_utils::TerminalManager;
 mod app;
@@ -105,25 +107,6 @@ enum UIEvent {
 }
 
 
-// Function to access the list_state mutex in a cleaner way and get the currently selected index
-fn get_selected_index(list_state: &Arc<Mutex<widgets::ListState>>) -> Option<usize> {
-    if let Ok(list_state_guard) = list_state.lock() {
-        list_state_guard.selected()
-    } else {
-        log::error!("Failed to acquire lock on list_state");
-        None
-    }
-}
-
-// Function to access the list_state mutex in a cleaner way and set the selected index
-fn set_selected_index(list_state: &Arc<Mutex<widgets::ListState>>, index: Option<usize>) {
-    if let Ok(mut list_state_guard) = list_state.lock() {
-        list_state_guard.select(index);
-    } else {
-        log::error!("Failed to acquire lock on list_state");
-    }
-}
-
 // Generic function to safely access a value inside an Arc<Mutex<T>>
 fn with_mutex<T, R, F>(arc_mutex: &Arc<Mutex<T>>, name: Option<&str>, f: F) -> Option<R>
 where
@@ -144,7 +127,7 @@ where
 
 fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error::Error>> {
 
-    // --- Ctrl+C ----------------------------------------------------------------------------------
+    // TODO: Ctrl+C not working --------------------------------------------------------------------
     // Set up signal handling for SIGINT (Ctrl+C)
     let mut signals = Signals::new(&[SIGINT]).expect("Failed to set up signals");
 
@@ -186,18 +169,12 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     ));
 
     // Wrap list_state in an Arc and Mutex for shared access
-    let list_state = Arc::new(Mutex::new(widgets::ListState::default()));
+    let list_state = Arc::new(Mutex::new(ListStateManager::new()));
+    //let list_state = Arc::new(Mutex::new(widgets::ListState::default()));
 
     // Clone pointers to `list_state` for the thread and main loop
     let list_state_thread = Arc::clone(&list_state);
     let list_state_main = Arc::clone(&list_state);
-
-    // Use the generic function 'with_mutex' to access the hosts vector
-    with_mutex(&hosts, Some("hosts"), |hosts| {
-        if !hosts.is_empty() {
-            set_selected_index(&list_state, Some(0));
-        }
-    });
 
     // Create a channel to communicate between the event handler thread and the main thread
     let (tx, rx) = mpsc::channel();
@@ -213,10 +190,12 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     // --- Thread to handle mouse and key events ---------------------------------------------------
     thread::spawn(move || {
 
-        // Use the generic function 'with_mutex' to access the hosts vector
+        // Use the generic function 'with_mutex' to access both hosts and list_state structures to put the selector in the first element of the list
         with_mutex(&hosts_thread, Some("hosts_thread"), |hosts| {
             if !hosts.is_empty() {
-                set_selected_index(&list_state_thread, Some(0));
+                with_mutex(&list_state_thread, Some("list_state"), |state| {
+                    state.select(0, 46);
+                });
             }
         });
 
@@ -232,30 +211,30 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                                 match key.code {
                                     KeyCode::Down => {
                                         log::debug!("Down Key pressed!");
-                                        let i = match get_selected_index(&list_state_thread) {
-                                            Some(i) => {
-                                                if i >= hosts.len() - 1 {
-                                                    0
-                                                } else {
-                                                    i + 1
-                                                }
+                                        let i = with_mutex(&list_state_thread, Some("list_state:Down_Key"), |state| {
+                                            state.get_index()
+                                        })
+                                        .map(|index| {
+                                            if index >= hosts.len() - 1 {
+                                                0
+                                            } else {
+                                                index + 1
                                             }
-                                            None => 0,
-                                        };
+                                        });
                                         Some(i)
                                     }
                                     KeyCode::Up => {
                                         log::debug!("Up Key pressed!");
-                                        let i = match get_selected_index(&list_state_thread) {
-                                            Some(i) => {
-                                                if i == 0 {
-                                                    hosts.len() - 1
-                                                } else {
-                                                    i - 1
-                                                }
+                                        let i = with_mutex(&list_state_thread, Some("list_state:Up_Key"), |state| {
+                                            state.get_index()
+                                        })
+                                        .map(|index| {
+                                            if index == 0 {
+                                                hosts.len() - 1
+                                            } else {
+                                                index - 1
                                             }
-                                            None => 0,
-                                        };
+                                        });
                                         Some(i)
                                     }
                                     KeyCode::Char('/') => {
@@ -277,10 +256,10 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                                     }
                                     KeyCode::Enter => {
                                         log::debug!("Enter Key pressed!");
-                                        log::debug!("list_state.selected() = {:?}", get_selected_index(&list_state_thread));
-                                        if let Some(selected) = get_selected_index(&list_state_thread) {
-                                            log::info!("\n{}", &entries[selected]);
-                                        }
+                                        with_mutex(&list_state_thread, Some("list_state:Enter"), |state| {
+                                            log::debug!("list_state.selected() = {:?}", state.get_index());
+                                            log::info!("\n{}", &entries[state.get_index()]);
+                                        });
                                         None
                                     }
                                     _ => None,
@@ -288,13 +267,18 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                             };
 
                             if let Some(index) = selected_index {
-                                tx_clone.send(UIEvent::UpdateSelection(index)).unwrap();
+                                tx_clone.send(UIEvent::UpdateSelection(index.unwrap())).unwrap();
                             }
+
                         }
 
                         Event::Mouse(mouse_event) => {
                             if let event::MouseEventKind::Down(_) = mouse_event.kind {
                                 let list_start = 2; // because of the window frame
+
+                                with_mutex(&list_state_thread, Some("list_state:MouseClick"), |state| {
+                                    log::debug!("index = {:?}, scroll offset = {:?}", state.get_index(), state.scroll_offset);
+                                });
 
                                 // Lock the mutex to access `hosts`
                                 let hosts = hosts_thread.lock().unwrap();
@@ -319,11 +303,16 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     loop {
         terminal_manager.draw(|f| {
             let size = f.size();
+
             let chunks = layout::Layout::default()
-                .direction(layout::Direction::Vertical)
-                .margin(1)
-                .constraints([layout::Constraint::Percentage(100)].as_ref())
-                .split(size);
+            .direction(layout::Direction::Vertical)
+            .margin(1)
+            .constraints([layout::Constraint::Percentage(100)].as_ref())
+            .split(size);
+
+            with_mutex(&list_state_main, Some("list_state"), |lsg| {
+                lsg.max_display_items = Some(chunks[0].height as usize);
+            });
 
             // Use of 'with_mutex' to access the *hosts* vector
             with_mutex(&hosts_main, Some("hosts_main"), |hosts| {
@@ -338,8 +327,8 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                     .highlight_symbol(">> ");
 
                 // Use the generic function 'with_mutex' to access the *list_state*
-                with_mutex(&list_state_main, Some("list_state"), |list_state_guard| {
-                    f.render_stateful_widget(list, chunks[0], list_state_guard);
+                with_mutex(&list_state_main, Some("list_state_main"), |state| {
+                    f.render_stateful_widget(list, chunks[0], state.list_state());
                 });
             });
 
@@ -350,7 +339,10 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
             match ui_event {
                 UIEvent::UpdateSelection(index) => {
                     log::debug!("Updating selection to index: {}", index);
-                    set_selected_index(&list_state_main, Some(index));
+                    with_mutex(&list_state_main, Some("list_state_main"), |state| {
+                        // TODO: get the max_display_items to put in here
+                        state.select(index, 46);
+                    });
                 }
                 UIEvent::Search => {
                     log::info!("Entering search mode.");
