@@ -1,7 +1,7 @@
 mod config;
 mod entry;  // This line tells Rust to include the `config.rs` file as a module
-mod list_utils;
-use list_utils::ListStateManager;
+mod liststate_utils;
+use liststate_utils::ListStateManager;
 mod terminal_utils;
 use terminal_utils::TerminalManager;
 mod app;
@@ -16,8 +16,7 @@ use crossterm::{event, terminal};
 use crossterm::event::{Event, KeyCode, KeyEvent, MouseEvent};
 use ratatui as tui;
 use tui::{
-    style::Color,
-    style::Style,
+    style::{Color, Modifier, Style},
     text,
     widgets,
     widgets::ListState,
@@ -104,6 +103,7 @@ enum UIEvent {
     Exit_error, // Exit event to stop the program by breaking from the main loop when error occurs
     Search, // Search event to enter the search mode
     Normal, // Normal event to enter the normal mode
+    Popup, // Open popup with the content of selected entry
 }
 
 
@@ -170,22 +170,28 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
 
     // Wrap list_state in an Arc and Mutex for shared access
     let list_state = Arc::new(Mutex::new(ListStateManager::new()));
-    //let list_state = Arc::new(Mutex::new(widgets::ListState::default()));
-
     // Clone pointers to `list_state` for the thread and main loop
     let list_state_thread = Arc::clone(&list_state);
     let list_state_main = Arc::clone(&list_state);
 
-    // Create a channel to communicate between the event handler thread and the main thread
-    let (tx, rx) = mpsc::channel();
 
     // Clone pointers to `hosts` for the thread and main loop
     let hosts_thread = Arc::clone(&hosts);
     let hosts_main = Arc::clone(&hosts);
 
-    // Spawn a thread to handle events
+    // Create a channel to communicate between the event handler thread and the main thread
+    let (tx, rx) = mpsc::channel();
     let tx_clone = tx.clone();
-    let entries_clone = entries.clone();
+
+    // Clone the entries and wrap them in Arc for shared acess
+    let entries_cloned = entries.clone();
+    let entries_thread = Arc::new(entries_cloned);
+
+    // Variable to keep the state of the popup
+    let popup_open = Arc::new(AtomicBool::new(false));
+    // Clone pointers to `popup_open` for the thread and main loop
+    let popup_open_thread = Arc::clone(&popup_open);
+    let popup_open_main = Arc::clone(&popup_open);
 
     // --- Thread to handle mouse and key events ---------------------------------------------------
     thread::spawn(move || {
@@ -259,6 +265,7 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                                         with_mutex(&list_state_thread, Some("list_state:Enter"), |lstate| {
                                             log::debug!("list_state.selected() = {:?}", lstate.get_index());
                                             log::info!("\n{}", &entries[lstate.get_index()]);
+                                            tx_clone.send(UIEvent::Popup).unwrap();
                                         });
                                         None
                                     }
@@ -329,6 +336,34 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                 });
             });
 
+            if popup_open_main.load(Ordering::SeqCst) {
+
+                // Render the popup
+                let popup_area = layout::Rect::new(
+                    size.width / 4,
+                    size.height / 4,
+                    size.width / 2,
+                    size.height / 2,
+                );
+
+                // Display the selected entry or some other content in the popup
+                with_mutex(&list_state_main, Some("list_state:render_text_box"), |lstate| {
+
+                    let popup_block = widgets::Block::default()
+                        .title(format!(" {} ", entries_thread[lstate.get_index()].host))
+                        .borders(widgets::Borders::ALL)
+                        .border_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+                        .style(Style::default().bg(Color::Black));
+
+                    let entry_text = entries_thread[lstate.get_index()].to_string();
+
+                    let text_widget = widgets::Paragraph::new(text::Span::raw(entry_text))
+                        .block(popup_block)
+                        .wrap(widgets::Wrap { trim: true });
+
+                    f.render_widget(text_widget, popup_area);
+                });
+            }
         })?;
 
         // Handle events from the channel
@@ -340,11 +375,20 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                         lstate.select(index);
                     });
                 }
+                UIEvent::Popup => {
+                    log::info!("Open a popup with the entry.");
+                    if !popup_open_main.load(Ordering::SeqCst) {
+                        popup_open_main.store(true, Ordering::SeqCst);
+                    }
+                }
                 UIEvent::Search => {
                     log::info!("Entering search mode.");
                 }
                 UIEvent::Normal => {
                     log::info!("Entering normal mode.");
+                    if popup_open_main.load(Ordering::SeqCst) {
+                        popup_open_main.store(false, Ordering::SeqCst);
+                    }
                 }
                 UIEvent::Exit => {
                     log::info!("Exit signal received, breaking main loop.");
