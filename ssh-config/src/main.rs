@@ -17,7 +17,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, MouseEvent};
 use ratatui as tui;
 use tui::{
     style::{Color, Modifier, Style},
-    text,
+    text::{Span, Text},
     widgets,
     widgets::ListState,
     layout,
@@ -162,7 +162,7 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     let hosts = Arc::new(Mutex::new(
         entries.iter()
             .map(|entry| {
-                widgets::ListItem::new(text::Span::raw(entry.host.clone()))
+                widgets::ListItem::new(Span::raw(entry.host.clone()))
                     .style(Style::default().fg(Color::White))
             })
             .collect::<Vec<widgets::ListItem>>(),
@@ -356,10 +356,9 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                         .style(Style::default().bg(Color::Black));
 
                     let entry_text = entries_thread[lstate.get_index()].to_string();
-
-                    let text_widget = widgets::Paragraph::new(text::Span::raw(entry_text))
+                    let text_widget = widgets::Paragraph::new(Text::raw(entry_text)) // Text::raw will interpret '\n' as line breaks
                         .block(popup_block)
-                        .wrap(widgets::Wrap { trim: true });
+                        .wrap(widgets::Wrap { trim: false });
 
                     f.render_widget(text_widget, popup_area);
                 });
