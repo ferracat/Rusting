@@ -5,6 +5,14 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+#[dependencies]
+#grapheme = "0.0.0"
+#grapheme-picker = "0.1.0"
+
+
 [dependencies]
-grapheme = "0.0.0"
-grapheme-picker = "0.1.0"
+unicode-segmentation = { version = "1.10.0", optional = true }
+
+[features]
+default = []  # Keeps `grapheme` feature off by default
+grapheme = ["unicode-segmentation"]

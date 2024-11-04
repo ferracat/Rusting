@@ -23,7 +23,7 @@ fn main() {
         Ok(_) => {
             // Input was successfully read
             println!("You entered: {}", input);
-            println!("The reverse: {}", &reverse(input));
+            println!("The reverse: {}", reverse(&input));
         }
         Err(error) => {
             // An error occurred while reading input
