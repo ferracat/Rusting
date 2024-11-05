@@ -16,7 +16,7 @@ jobs:
 
     strategy:
       matrix:
-        project: [ "bitmap", "dlprog", "reverse", "to-do", "ssh-config" ]
+        project: [ "bitmap", "ctrlc", "dlprog", "guessing_game", "reverse", "ssh-config", "sqlite", "to-do" ]
 
     steps:
     - uses: actions/checkout@v3
