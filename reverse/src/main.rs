@@ -1,19 +1,19 @@
 use std::io;
 
-#[cfg(feature = "grapheme")]
-use unicode_segmentation::UnicodeSegmentation;
-
 #[cfg(not(feature = "grapheme"))]
 pub fn reverse(input: &str) -> String {
     input.chars().rev().collect::<String>()
 }
+
+#[cfg(feature = "grapheme")]
+use unicode_segmentation::UnicodeSegmentation;
 #[cfg(feature = "grapheme")]
 pub fn reverse(input: &str) -> String {
     input.graphemes(true).rev().collect::<String>()
 }
 
 fn main() {
-    println!("Hello, world!");
+    println!("Type something so that it can be shown in the reverse order");
 
     // Create a new instance of `std::io::stdin`
     let mut input = String::new();
