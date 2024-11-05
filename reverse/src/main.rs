@@ -22,8 +22,9 @@ fn main() {
     match io::stdin().read_line(&mut input) {
         Ok(_) => {
             // Input was successfully read
-            println!("You entered: {}", input);
-            println!("The reverse: {}", reverse(&input));
+            let trimmed_input = input.trim_end();
+            println!("You entered: {}", trimmed_input);
+            println!("The reverse: {}", reverse(&trimmed_input));
         }
         Err(error) => {
             // An error occurred while reading input
