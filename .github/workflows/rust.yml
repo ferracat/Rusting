@@ -10,53 +10,21 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-and-test:
 
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        project: [ "bitmap", "dlprog", "reverse", "to-do", "ssh-config" ]
+
     steps:
     - uses: actions/checkout@v3
-    
-    - name: Build project "bitmap"
+
+    - name: Build project
       run: cargo build --verbose
-      working-directory: bitmap
-      
-    - name: Run tests for "bitmap"
+      working-directory: ${{ matrix.project }}
+
+    - name: Run tests
       run: cargo test --verbose
-      working-directory: bitmap
-
-      
-    - name: Build project "dlprog"
-      run: cargo build --verbose
-      working-directory: dlprog
-      
-    - name: Run tests for "dlprog"
-      run: cargo test --verbose
-      working-directory: dlprog
-
-      
-    - name: Build project "reverse"
-      run: cargo build --verbose
-      working-directory: reverse
-      
-    - name: Run tests for "reverse"
-      run: cargo test --verbose
-      working-directory: reverse
-
-
-    - name: Build project "to-do"
-      run: cargo build --verbose
-      working-directory: to-do
-      
-    - name: Run tests for "to-do"
-      run: cargo test --verbose
-      working-directory: to-do
-
-
-    - name: Build project "ssh-config"
-      run: cargo build --verbose
-      working-directory: ssh-config
-  
-    - name: Run tests for "ssh-config"
-      run: cargo test --verbose
-      working-directory: ssh-config
+      working-directory: ${{ matrix.project }}
