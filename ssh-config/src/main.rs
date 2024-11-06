@@ -5,27 +5,29 @@ use liststate_utils::ListStateManager;
 mod terminal_utils;
 use terminal_utils::TerminalManager;
 mod app;
-use app::AppMode; // Bring AppMode into scope
+use app::AppMode;  // Bring AppMode into scope
 
-use std::time::Duration;
 use std::process;
+use std::time::Duration;
 
 // TUI
 use crossterm;
-use crossterm::{event, terminal};
 use crossterm::event::{Event, KeyCode, KeyEvent, MouseEvent};
+use crossterm::{event, terminal};
 use ratatui as tui;
 use tui::{
+    backend::Backend,
+    layout,
     style::{Color, Modifier, Style},
     text::{Span, Text},
     widgets,
-    widgets::ListState,
-    layout,
+    widgets::{Block, Borders, Cell, Row, Table},
+    Frame,
 };
 
 // LOGS
-use simplelog;
 use log;
+use simplelog;
 // ::{trace, debug, info, warn, error};
 
 // THREADS
@@ -99,11 +101,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 enum UIEvent {
     Input(Event),
     UpdateSelection(usize),
-    Exit, // Exit event to stop the program by breaking from the main loop
+    Exit,       // Exit event to stop the program by breaking from the main loop
     Exit_error, // Exit event to stop the program by breaking from the main loop when error occurs
-    Search, // Search event to enter the search mode
-    Normal, // Normal event to enter the normal mode
-    Popup, // Open popup with the content of selected entry
+    Search,     // Search event to enter the search mode
+    Normal,     // Normal event to enter the normal mode
+    Popup,      // Open popup with the content of selected entry
 }
 
 
@@ -123,10 +125,50 @@ where
     }
 }
 
+fn render_popup_table(f: &mut Frame, area: layout::Rect, entry: &entry::SshConfigEntry) {
+    let popup_block = Block::default()
+        .title(Span::styled(
+            format!(" {} ", entry.host),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red))
+        .style(Style::default().bg(Color::Black));
 
+    // Collect rows for each field in the entry
+    let mut rows = vec![
+        Row::new(vec![Cell::from("Host"), Cell::from(entry.host.clone())]),
+    ];
+
+    // Add each option as a row
+    for (key, value) in &entry.options {
+        rows.push(Row::new(vec![Cell::from(key.clone()), Cell::from(value.clone())]));
+    }
+
+    // Add each comment as a row
+    for comment in &entry.comments {
+        rows.push(Row::new(vec![Cell::from("Comment"), Cell::from(comment.clone())]));
+    }
+
+    // Add tag if it exists
+    if let Some(tag) = &entry.tag {
+        rows.push(Row::new(vec![Cell::from("Tag"), Cell::from(tag.clone())]));
+    }
+
+    let table = Table::new(
+        rows,
+        &[
+            layout::Constraint::Percentage(30),
+            layout::Constraint::Percentage(70),
+        ],
+    )
+    .block(popup_block)
+    .style(Style::default().fg(Color::White));
+
+    f.render_widget(table, area);
+}
 
 fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error::Error>> {
-
     // TODO: Ctrl+C not working --------------------------------------------------------------------
     // Set up signal handling for SIGINT (Ctrl+C)
     let mut signals = Signals::new(&[SIGINT]).expect("Failed to set up signals");
@@ -309,10 +351,10 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
             let size = f.size();
 
             let chunks = layout::Layout::default()
-            .direction(layout::Direction::Vertical)
-            .margin(1)
-            .constraints([layout::Constraint::Percentage(100)].as_ref())
-            .split(size);
+                .direction(layout::Direction::Vertical)
+                .margin(1)
+                .constraints([layout::Constraint::Percentage(100)].as_ref())
+                .split(size);
 
             with_mutex(&list_state_main, Some("list_state"), |lstate| {
                 lstate.max_display_items = chunks[0].height as usize - 3; // 3 is the lines ocuppied by the borders
@@ -321,14 +363,15 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
             // Use of 'with_mutex' to access the *hosts* vector
             with_mutex(&hosts_main, Some("hosts_main"), |hosts| {
                 let list = widgets::List::new(hosts.iter().cloned())
-                    .block(widgets::Block::default()
-                        .borders(widgets::Borders::ALL)
-                        .title(" SSH Hosts ")
-                        .border_style(Style::default().fg(Color::Blue))
-                        .title_style(Style::default().fg(Color::Blue))
+                    .block(
+                        Block::default()
+                            .borders(widgets::Borders::ALL)
+                            .border_style(Style::default().fg(Color::Blue))
+                            .title(" SSH Hosts ")
+                            .title_style(Style::default().fg(Color::Blue)),
                     )
-                    .highlight_style(Style::default().fg(Color::Yellow))
-                    .highlight_symbol(">> ");
+                    .highlight_symbol(">> ")
+                    .highlight_style(Style::default().fg(Color::Yellow));
 
                 // Use the nested 'with_mutex' to access the *list_state*
                 with_mutex(&list_state_main, Some("list_state_main"), |lstate| {
@@ -346,21 +389,16 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                     size.height / 2,
                 );
 
-                // Display the selected entry or some other content in the popup
+                // Clear the background of the popup area to avoid overlap issues
+                let background_block = Block::default().style(Style::default().bg(Color::Black));
+                f.render_widget(background_block, popup_area);
+
                 with_mutex(&list_state_main, Some("list_state:render_text_box"), |lstate| {
+                    // Retrieve the selected entry (ensure you handle out-of-bounds safely)
+                    let entry = &entries_thread[lstate.get_index()]; // Get the selected `SshConfigEntry`
 
-                    let popup_block = widgets::Block::default()
-                        .title(format!(" {} ", entries_thread[lstate.get_index()].host))
-                        .borders(widgets::Borders::ALL)
-                        .border_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-                        .style(Style::default().bg(Color::Black));
-
-                    let entry_text = entries_thread[lstate.get_index()].to_string();
-                    let text_widget = widgets::Paragraph::new(Text::raw(entry_text)) // Text::raw will interpret '\n' as line breaks
-                        .block(popup_block)
-                        .wrap(widgets::Wrap { trim: false });
-
-                    f.render_widget(text_widget, popup_area);
+                    // Render the popup with the selected entry
+                    render_popup_table(f, popup_area, entry);
                 });
             }
         })?;
