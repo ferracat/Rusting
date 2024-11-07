@@ -4,6 +4,8 @@ mod liststate_utils;
 use liststate_utils::ListStateManager;
 mod terminal_utils;
 use terminal_utils::TerminalManager;
+mod tui_utils;
+use tui_utils::render_popup_table;
 mod app;
 use app::AppMode;  // Bring AppMode into scope
 
@@ -12,17 +14,15 @@ use std::time::Duration;
 
 // TUI
 use crossterm;
-use crossterm::event::{Event, KeyCode, KeyEvent, MouseEvent};
-use crossterm::{event, terminal};
+use crossterm::event::{Event, KeyCode};
+use crossterm::event;
 use ratatui as tui;
 use tui::{
-    backend::Backend,
     layout,
-    style::{Color, Modifier, Style},
-    text::{Span, Text},
+    style::{Color, Style},
+    text::Span,
     widgets,
-    widgets::{Block, Borders, Cell, Row, Table},
-    Frame,
+    widgets::Block,
 };
 
 // LOGS
@@ -102,7 +102,7 @@ enum UIEvent {
     Input(Event),
     UpdateSelection(usize),
     Exit,       // Exit event to stop the program by breaking from the main loop
-    Exit_error, // Exit event to stop the program by breaking from the main loop when error occurs
+    ExitError,  // Exit event to stop the program by breaking from the main loop when error occurs
     Search,     // Search event to enter the search mode
     Normal,     // Normal event to enter the normal mode
     Popup,      // Open popup with the content of selected entry
@@ -125,48 +125,7 @@ where
     }
 }
 
-fn render_popup_table(f: &mut Frame, area: layout::Rect, entry: &entry::SshConfigEntry) {
-    let popup_block = Block::default()
-        .title(Span::styled(
-            format!(" {} ", entry.host),
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Red))
-        .style(Style::default().bg(Color::Black));
 
-    // Collect rows for each field in the entry
-    let mut rows = vec![
-        Row::new(vec![Cell::from("Host"), Cell::from(entry.host.clone())]),
-    ];
-
-    // Add each option as a row
-    for (key, value) in &entry.options {
-        rows.push(Row::new(vec![Cell::from(key.clone()), Cell::from(value.clone())]));
-    }
-
-    // Add each comment as a row
-    for comment in &entry.comments {
-        rows.push(Row::new(vec![Cell::from("Comment"), Cell::from(comment.clone())]));
-    }
-
-    // Add tag if it exists
-    if let Some(tag) = &entry.tag {
-        rows.push(Row::new(vec![Cell::from("Tag"), Cell::from(tag.clone())]));
-    }
-
-    let table = Table::new(
-        rows,
-        &[
-            layout::Constraint::Percentage(30),
-            layout::Constraint::Percentage(70),
-        ],
-    )
-    .block(popup_block)
-    .style(Style::default().fg(Color::White));
-
-    f.render_widget(table, area);
-}
 
 fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error::Error>> {
     // TODO: Ctrl+C not working --------------------------------------------------------------------
@@ -232,7 +191,7 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     // Variable to keep the state of the popup
     let popup_open = Arc::new(AtomicBool::new(false));
     // Clone pointers to `popup_open` for the thread and main loop
-    let popup_open_thread = Arc::clone(&popup_open);
+    //let popup_open_thread = Arc::clone(&popup_open);
     let popup_open_main = Arc::clone(&popup_open);
 
     // --- Thread to handle mouse and key events ---------------------------------------------------
@@ -383,15 +342,15 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
 
                 // Render the popup
                 let popup_area = layout::Rect::new(
-                    size.width / 4,
-                    size.height / 4,
-                    size.width / 2,
-                    size.height / 2,
+                    size.width / 5,
+                    size.height / 5,
+                    3 * size.width / 5,
+                    3 * size.height / 5,
                 );
 
-                // Clear the background of the popup area to avoid overlap issues
-                let background_block = Block::default().style(Style::default().bg(Color::Black));
-                f.render_widget(background_block, popup_area);
+                // // Clear the background of the popup area to avoid overlap issues
+                // let background_block = Block::default().style(Style::default().bg(Color::Black));
+                // f.render_widget(background_block, popup_area);
 
                 with_mutex(&list_state_main, Some("list_state:render_text_box"), |lstate| {
                     // Retrieve the selected entry (ensure you handle out-of-bounds safely)
@@ -431,10 +390,9 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                     log::info!("Exit signal received, breaking main loop.");
                     break; // Break the loop and exit the program
                 }
-                UIEvent::Exit_error => {
+                UIEvent::ExitError => {
                     log::info!("Exit signal received with error code.");
                     process::exit(1);
-                    break; // Break the loop and exit the program
                 }
                 _ => {}
             }

@@ -70,12 +70,33 @@ impl SshConfigEntry {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Log levels for SSH configuration
+#[derive(Debug, Clone, PartialEq)]
+pub enum SshOptionLogLevel {
+    DEBUG,
+    INFO,
+    WARNING,
+    ERROR,
+}
+
+/// SSH configuration options
+#[derive(Debug, Clone, PartialEq)]
 pub enum SshOption {
     HostName(String),
     User(String),
     Port(u16),
     IdentityFile(String),
     StrictHostKeyChecking(bool),
-    // TODO: Add the other options
+    ForwardX11(bool),
+    LogLevel(SshOptionLogLevel),
+    ControlMaster(),
+    ControlPath(String),
+    ControlPersist(),
+    TCPKeepAlive(bool),
+    ServerAliveInterval(u16),
+    ServerAliveCountMax(u16),
+    UserKnownHostsFile(String),
+    ProxyJump(String),
+    ProxyCommand(String),
+    LocalForward(String),
 }
