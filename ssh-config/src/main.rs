@@ -14,8 +14,8 @@ use std::time::Duration;
 
 // TUI
 use crossterm;
-use crossterm::event::{Event, KeyCode};
 use crossterm::event;
+use crossterm::event::{Event, KeyCode};
 use ratatui as tui;
 use tui::{
     layout,
@@ -31,7 +31,12 @@ use simplelog;
 // ::{trace, debug, info, warn, error};
 
 // THREADS
-use std::sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+    Arc,
+    Mutex,
+};
 use std::thread;
 use std::thread::sleep;
 
@@ -319,33 +324,35 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                 lstate.max_display_items = chunks[0].height as usize - 3; // 3 is the lines ocuppied by the borders
             });
 
-            // Use of 'with_mutex' to access the *hosts* vector
-            with_mutex(&hosts_main, Some("hosts_main"), |hosts| {
-                let list = widgets::List::new(hosts.iter().cloned())
-                    .block(
-                        Block::default()
-                            .borders(widgets::Borders::ALL)
-                            .border_style(Style::default().fg(Color::Blue))
-                            .title(" SSH Hosts ")
-                            .title_style(Style::default().fg(Color::Blue)),
-                    )
-                    .highlight_symbol(">> ")
-                    .highlight_style(Style::default().fg(Color::Yellow));
+            if !popup_open_main.load(Ordering::SeqCst) {
+                // Use of 'with_mutex' to access the *hosts* vector
+                with_mutex(&hosts_main, Some("hosts_main"), |hosts| {
+                    let list = widgets::List::new(hosts.iter().cloned())
+                        .block(
+                            Block::default()
+                                .borders(widgets::Borders::ALL)
+                                .border_style(Style::default().fg(Color::Blue))
+                                .title(" SSH Hosts ")
+                                .title_style(Style::default().fg(Color::Blue)),
+                        )
+                        .highlight_symbol(">> ")
+                        .highlight_style(Style::default().fg(Color::Yellow));
 
-                // Use the nested 'with_mutex' to access the *list_state*
-                with_mutex(&list_state_main, Some("list_state_main"), |lstate| {
-                    f.render_stateful_widget(list, chunks[0], lstate.list_state());
+                    // Use the nested 'with_mutex' to access the *list_state*
+                    with_mutex(&list_state_main, Some("list_state_main"), |lstate| {
+                        f.render_stateful_widget(list, chunks[0], lstate.list_state());
+                    });
                 });
-            });
+            }
 
             if popup_open_main.load(Ordering::SeqCst) {
 
                 // Render the popup
                 let popup_area = layout::Rect::new(
-                    size.width / 5,
-                    size.height / 5,
-                    3 * size.width / 5,
-                    3 * size.height / 5,
+                    size.width / 6,
+                    size.height / 6,
+                    4 * size.width / 6,
+                    4 * size.height / 6,
                 );
 
                 // // Clear the background of the popup area to avoid overlap issues
@@ -405,4 +412,48 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     // > The restore terminal will be done by the drop in **TerminalManager**
 
     Ok(())
+}
+
+
+
+#[derive(Debug)]
+enum NavigationDirection {
+    Up,
+    Down,
+}
+
+fn handle_navigation(
+    list_state: &Arc<Mutex<ListStateManager>>,
+    hosts: &Arc<Mutex<Vec<widgets::ListItem>>>,
+    direction: NavigationDirection,
+) -> usize {
+    with_mutex(list_state, Some("list_state"), |lstate| {
+        let current_index = lstate.get_index(); // Directly get the current index as usize
+        let total_hosts = hosts.lock().unwrap().len();
+
+        // Compute the new index based on navigation direction
+        let new_index = match direction {
+            NavigationDirection::Down => {
+                if current_index >= total_hosts - 1 {
+                    0 // Wrap around to the start
+                } else {
+                    current_index + 1
+                }
+            }
+            NavigationDirection::Up => {
+                if current_index == 0 {
+                    total_hosts - 1 // Wrap around to the end
+                } else {
+                    current_index - 1
+                }
+            }
+        };
+
+        log::debug!("Updating selection to index: {}", new_index);
+
+        // Update the index in the ListStateManager
+        lstate.select(new_index);
+
+        new_index // Return the computed index
+    }).unwrap_or(0) // Default to 0 if mutex lock fails
 }
