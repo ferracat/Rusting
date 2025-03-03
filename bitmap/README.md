@@ -1,6 +1,10 @@
 bitmap
 =======
 
+> https://en.wikipedia.org/wiki/BMP_file_format
+
+
+
 The BMP (Bitmap) image format has a relatively simple structure, and understanding it is important if you want to create or manipulate BMP images in your Rust code. Here's a basic overview of the BMP file structure:
 
 1. **File Header (14 Bytes):**

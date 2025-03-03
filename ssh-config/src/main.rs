@@ -189,7 +189,7 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     let (tx, rx) = mpsc::channel();
     let tx_clone = tx.clone();
 
-    // Clone the entries and wrap them in Arc for shared acess
+    // Clone the entries and wrap them in Arc for shared access
     let entries_cloned = entries.clone();
     let entries_thread = Arc::new(entries_cloned);
 
