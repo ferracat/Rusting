@@ -32,14 +32,20 @@ impl<W: Write> TerminalManager<W> {
     {
         self.terminal.draw(f).map(|_| ()) // Map the result to `Result<(), Error>`
     }
+
+    /// Restaura o terminal ao seu estado original
+    pub fn cleanup(&mut self) -> io::Result<()> {
+        terminal::disable_raw_mode()?;
+        self.terminal.backend_mut().execute(terminal::LeaveAlternateScreen)?;
+        self.terminal.backend_mut().execute(event::DisableMouseCapture)?;
+        self.terminal.show_cursor()?;
+        Ok(())
+    }
 }
 
-// Drop implementation for automatic cleanup
+// Drop implementation for automatic cleanup as fallback
 impl<W: Write> Drop for TerminalManager<W> {
     fn drop(&mut self) {
-        let _ = terminal::disable_raw_mode();
-        let _ = self.terminal.backend_mut().execute(terminal::LeaveAlternateScreen);
-        let _ = self.terminal.backend_mut().execute(event::DisableMouseCapture);
-        let _ = self.terminal.show_cursor();
+        let _ = self.cleanup();
     }
 }

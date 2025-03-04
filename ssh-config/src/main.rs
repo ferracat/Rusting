@@ -19,9 +19,9 @@ use crossterm::event::{Event, KeyCode};
 use ratatui as tui;
 use tui::{
     layout,
-    style::{Color, Style},
-    text::Span,
-    widgets,
+    style::{Color, Style, Modifier},
+    text::{Span, Line},
+    widgets::{self, Table, Row, Cell},
     widgets::Block,
 };
 
@@ -111,6 +111,7 @@ enum UIEvent {
     Search,     // Search event to enter the search mode
     Normal,     // Normal event to enter the normal mode
     Popup,      // Open popup with the content of selected entry
+    Help,       // Show help popup
 }
 
 
@@ -133,36 +134,40 @@ where
 
 
 fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error::Error>> {
-    // TODO: Ctrl+C not working --------------------------------------------------------------------
     // Set up signal handling for SIGINT (Ctrl+C)
     let mut signals = Signals::new(&[SIGINT]).expect("Failed to set up signals");
+    
+    // Canal para comunicar o sinal SIGINT entre as threads
+    let (sigint_tx, sigint_rx) = mpsc::channel();
+    let sigint_tx_clone = sigint_tx.clone();
 
     // Shared flag to indicate unsaved changes
     let has_changes = Arc::new(AtomicBool::new(false));
-
-    // Set up signal handling for SIGINT (Ctrl+C) in a separate thread
     let has_changes_clone = Arc::clone(&has_changes);
+
+    // Thread para lidar com sinais
     thread::spawn(move || {
-        for signal in &mut signals {
+        for signal in signals.forever() {
             if signal == SIGINT {
                 if has_changes_clone.load(Ordering::SeqCst) {
                     log::debug!("Ctrl+C pressed. There are unsaved changes!");
                 } else {
                     log::debug!("Ctrl+C pressed. No unsaved changes.");
                 }
-                println!("Exiting gracefully...");
-                process::exit(1);  // Exit immediately with code 1
+                // Enviar sinal para a thread principal
+                let _ = sigint_tx_clone.send(());
+                break;
             }
         }
     });
-
 
     // --- Terminal Manager ------------------------------------------------------------------------
     // Instantiate TerminalManager, which automatically sets up the terminal
     let mut terminal_manager = TerminalManager::new(std::io::stdout())?;
 
-    // Use AppMode within this function
-    let mut app_mode = AppMode::Normal;
+    // Criar o app_mode como Arc<Mutex>
+    let app_mode = Arc::new(Mutex::new(AppMode::Normal));
+    let app_mode_thread = Arc::clone(&app_mode);
 
     // Create the list of hostnames and wrap it in Arc and Mutex (Atomic Reference Counted smart pointer with a mutex for safe access across threads)
     let hosts = Arc::new(Mutex::new(
@@ -192,6 +197,7 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
     // Clone the entries and wrap them in Arc for shared access
     let entries_cloned = entries.clone();
     let entries_thread = Arc::new(entries_cloned);
+    let entries_main = Arc::clone(&entries_thread);  // Clone para o loop principal
 
     // Variable to keep the state of the popup
     let popup_open = Arc::new(AtomicBool::new(false));
@@ -216,71 +222,102 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                 if let Ok(event) = event::read() {
                     match event {
                         Event::Key(key) => {
-                            let selected_index = {
-                                // Lock the mutex to access `hosts` safely
-                                let hosts = hosts_thread.lock().unwrap();
-
-                                match key.code {
-                                    KeyCode::Down => {
-                                        log::debug!("Down Key pressed!");
-                                        let i = with_mutex(&list_state_thread, Some("list_state:Down_Key"), |lstate| {
-                                            lstate.get_index()
-                                        })
-                                        .map(|index| {
-                                            if index >= hosts.len() - 1 {
-                                                0
-                                            } else {
-                                                index + 1
-                                            }
-                                        });
-                                        Some(i)
+                            match key.code {
+                                KeyCode::Down => {
+                                    log::debug!("Down Key pressed!");
+                                    let i = with_mutex(&list_state_thread, Some("list_state:Down_Key"), |lstate| {
+                                        lstate.get_index()
+                                    })
+                                    .map(|index| {
+                                        if index >= hosts_thread.lock().unwrap().len() - 1 {
+                                            0
+                                        } else {
+                                            index + 1
+                                        }
+                                    });
+                                    if let Some(i) = i {
+                                        tx_clone.send(UIEvent::UpdateSelection(i)).unwrap();
                                     }
-                                    KeyCode::Up => {
-                                        log::debug!("Up Key pressed!");
-                                        let i = with_mutex(&list_state_thread, Some("list_state:Up_Key"), |lstate| {
-                                            lstate.get_index()
-                                        })
-                                        .map(|index| {
-                                            if index == 0 {
-                                                hosts.len() - 1
-                                            } else {
-                                                index - 1
-                                            }
-                                        });
-                                        Some(i)
-                                    }
-                                    KeyCode::Char('/') => {
-                                        // Switch to search mode
-                                        log::debug!("'/' Key pressed!");
-                                        tx_clone.send(UIEvent::Search).unwrap();  // Send a signal to enter Search mode
-                                        None
-                                    }
-                                    KeyCode::Esc => {
-                                        // Exit search mode and return to normal
-                                        log::debug!("'Esc' Key pressed!");
-                                        tx_clone.send(UIEvent::Normal).unwrap();  // Send a signal to enter Normal mode
-                                        None
-                                    }
-                                    KeyCode::Char('q') => {
-                                        log::debug!("'q' Key pressed!");
-                                        tx_clone.send(UIEvent::Exit).unwrap();  // Send an Exit signal
-                                        None
-                                    }
-                                    KeyCode::Enter => {
-                                        log::debug!("Enter Key pressed!");
-                                        with_mutex(&list_state_thread, Some("list_state:Enter"), |lstate| {
-                                            log::debug!("list_state.selected() = {:?}", lstate.get_index());
-                                            log::info!("\n{}", &entries[lstate.get_index()]);
-                                            tx_clone.send(UIEvent::Popup).unwrap();
-                                        });
-                                        None
-                                    }
-                                    _ => None,
                                 }
-                            };
+                                KeyCode::Up => {
+                                    log::debug!("Up Key pressed!");
+                                    let i = with_mutex(&list_state_thread, Some("list_state:Up_Key"), |lstate| {
+                                        lstate.get_index()
+                                    })
+                                    .map(|index| {
+                                        if index == 0 {
+                                            hosts_thread.lock().unwrap().len() - 1
+                                        } else {
+                                            index - 1
+                                        }
+                                    });
+                                    if let Some(i) = i {
+                                        tx_clone.send(UIEvent::UpdateSelection(i)).unwrap();
+                                    }
+                                }
+                                KeyCode::Char('/') => {
+                                    log::debug!("'/' Key pressed!");
+                                    tx_clone.send(UIEvent::Search).unwrap();
+                                }
+                                KeyCode::Esc => {
+                                    log::debug!("'Esc' Key pressed!");
+                                    tx_clone.send(UIEvent::Normal).unwrap();
+                                }
+                                KeyCode::Char('q') => {
+                                    log::debug!("'q' Key pressed!");
+                                    // Verificar se estamos no modo de busca
+                                    let is_search = with_mutex(&app_mode_thread, Some("app_mode"), |mode| {
+                                        mode.is_search()
+                                    }).unwrap_or(false);
 
-                            if let Some(index) = selected_index {
-                                tx_clone.send(UIEvent::UpdateSelection(index.unwrap())).unwrap();
+                                    if !is_search {
+                                        tx_clone.send(UIEvent::Exit).unwrap();
+                                    } else {
+                                        // Se estiver no modo de busca, deixar o handle_search_mode tratar
+                                        handle_search_mode(event, &app_mode_thread, &entries_thread)
+                                            .map(|e| tx_clone.send(e).unwrap());
+                                    }
+                                }
+                                KeyCode::Char('h') => {
+                                    log::debug!("'h' Key pressed!");
+                                    // Verificar se estamos no modo de busca
+                                    let is_search = with_mutex(&app_mode_thread, Some("app_mode"), |mode| {
+                                        mode.is_search()
+                                    }).unwrap_or(false);
+
+                                    if !is_search {
+                                        tx_clone.send(UIEvent::Help).unwrap();
+                                    } else {
+                                        // Se estiver no modo de busca, deixar o handle_search_mode tratar
+                                        handle_search_mode(event, &app_mode_thread, &entries_thread)
+                                            .map(|e| tx_clone.send(e).unwrap());
+                                    }
+                                }
+                                KeyCode::Enter => {
+                                    log::debug!("Enter Key pressed!");
+                                    with_mutex(&list_state_thread, Some("list_state:Enter"), |lstate| {
+                                        log::debug!("list_state.selected() = {:?}", lstate.get_index());
+                                        // Verificar se estamos no modo de busca
+                                        with_mutex(&app_mode_thread, Some("app_mode"), |mode| {
+                                            if let AppMode::Search { matches, .. } = mode {
+                                                // Se estiver no modo de busca, usar o índice dos matches
+                                                if !matches.is_empty() {
+                                                    let selected = lstate.get_index();
+                                                    if selected < matches.len() {
+                                                        // Usar o índice real do entry a partir dos matches
+                                                        lstate.select(matches[selected]);
+                                                    }
+                                                }
+                                            }
+                                        });
+                                        tx_clone.send(UIEvent::Popup).unwrap();
+                                    });
+                                }
+                                _ => {
+                                    // Tratar outros caracteres quando estiver no modo de busca
+                                    handle_search_mode(event, &app_mode_thread, &entries_thread)
+                                        .map(|e| tx_clone.send(e).unwrap());
+                                }
                             }
                         }
 
@@ -311,43 +348,87 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
 
     // --- Main loop -------------------------------------------------------------------------------
     loop {
+        // Verificar se recebemos um sinal SIGINT
+        if sigint_rx.try_recv().is_ok() {
+            log::info!("SIGINT received, exiting gracefully...");
+            // Restaurar o terminal antes de sair
+            terminal_manager.cleanup()?;
+            process::exit(0);
+        }
+
         terminal_manager.draw(|f| {
             let size = f.size();
 
+            // Criar um layout com espaço para a barra de pesquisa na parte inferior
             let chunks = layout::Layout::default()
                 .direction(layout::Direction::Vertical)
                 .margin(1)
-                .constraints([layout::Constraint::Percentage(100)].as_ref())
+                .constraints([
+                    layout::Constraint::Min(3),     // Lista principal
+                    layout::Constraint::Length(3),  // Barra de pesquisa
+                ].as_ref())
                 .split(size);
 
-            with_mutex(&list_state_main, Some("list_state"), |lstate| {
-                lstate.max_display_items = chunks[0].height as usize - 3; // 3 is the lines ocuppied by the borders
-            });
-
+            // Primeiro renderiza a lista
             if !popup_open_main.load(Ordering::SeqCst) {
-                // Use of 'with_mutex' to access the *hosts* vector
                 with_mutex(&hosts_main, Some("hosts_main"), |hosts| {
-                    let list = widgets::List::new(hosts.iter().cloned())
-                        .block(
-                            Block::default()
-                                .borders(widgets::Borders::ALL)
-                                .border_style(Style::default().fg(Color::Blue))
-                                .title(" SSH Hosts ")
-                                .title_style(Style::default().fg(Color::Blue)),
-                        )
-                        .highlight_symbol(">> ")
-                        .highlight_style(Style::default().fg(Color::Yellow));
+                    with_mutex(&app_mode, Some("app_mode"), |mode: &mut AppMode| {
+                        // Filtrar a lista se estiver no modo de busca
+                        let items_to_show = if let AppMode::Search { matches, query, .. } = mode {
+                            log::debug!("Current search: '{}' with {} matches", query, matches.len());
+                            if query.is_empty() {
+                                hosts.clone()
+                            } else {
+                                matches.iter()
+                                    .map(|&idx| {
+                                        // Criar um novo ListItem sem os 3 espaços
+                                        let host = &entries_main[idx].host;
+                                        widgets::ListItem::new(Span::raw(host.to_string()))
+                                    })
+                                    .collect::<Vec<_>>()
+                            }
+                        } else {
+                            hosts.clone()
+                        };
 
-                    // Use the nested 'with_mutex' to access the *list_state*
-                    with_mutex(&list_state_main, Some("list_state_main"), |lstate| {
-                        f.render_stateful_widget(list, chunks[0], lstate.list_state());
+                        let items_clone = items_to_show.clone();  // Clone para usar depois
+
+                        let list = widgets::List::new(items_to_show)
+                            .block(
+                                Block::default()
+                                    .borders(widgets::Borders::ALL)
+                                    .border_style(Style::default().fg(Color::Blue))
+                                    .title(" SSH Hosts ")
+                                    .title_style(Style::default().fg(Color::Blue)),
+                            )
+                            .highlight_symbol(">> ")
+                            .highlight_style(Style::default().fg(Color::Yellow));
+
+                        with_mutex(&list_state_main, Some("list_state_main"), |lstate| {
+                            // Resetar a seleção se não houver itens
+                            if items_clone.is_empty() {
+                                lstate.select(0);
+                            }
+                            f.render_stateful_widget(list, chunks[0], lstate.list_state());
+                        });
                     });
                 });
             }
 
-            if popup_open_main.load(Ordering::SeqCst) {
+            // Depois renderiza a barra de pesquisa na parte inferior
+            with_mutex(&app_mode, Some("app_mode"), |mode: &mut AppMode| {
+                if mode.is_search() {
+                    tui_utils::render_search_bar(f, chunks[1], mode);
+                }
+            });
 
-                // Render the popup
+            // Atualiza o número máximo de itens visíveis
+            with_mutex(&list_state_main, Some("list_state"), |lstate| {
+                lstate.max_display_items = chunks[0].height as usize - 3;
+            });
+
+            // Renderiza o popup se necessário
+            if popup_open_main.load(Ordering::SeqCst) {
                 let popup_area = layout::Rect::new(
                     size.width / 6,
                     size.height / 6,
@@ -355,22 +436,82 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                     4 * size.height / 6,
                 );
 
-                // // Clear the background of the popup area to avoid overlap issues
-                // let background_block = Block::default().style(Style::default().bg(Color::Black));
-                // f.render_widget(background_block, popup_area);
+                with_mutex(&app_mode, Some("app_mode"), |mode| {
+                    match mode {
+                        AppMode::Help => {
+                            // Definir os dados da tabela
+                            let rows = vec![
+                                Row::new(vec![Cell::from(""), Cell::from("")]),  // Linha em branco
+                                Row::new(vec![
+                                    Cell::from(Span::styled("  h", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))),
+                                    Cell::from("This menu")
+                                ]),
+                                Row::new(vec![
+                                    Cell::from(Span::styled("  q", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))),
+                                    Cell::from("Quit")
+                                ]),
+                                Row::new(vec![
+                                    Cell::from(Span::styled("  ESC", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))),
+                                    Cell::from("Back to normal mode")
+                                ]),
+                                Row::new(vec![
+                                    Cell::from(Span::styled("  /", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))),
+                                    Cell::from("Search mode")
+                                ]),
+                                Row::new(vec![
+                                    Cell::from(Span::styled("  e", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))),
+                                    Cell::from("Edit mode")
+                                ]),
+                            ];
+                            
+                            // Criar layout vertical para título e tabela
+                            let help_layout = layout::Layout::default()
+                                .direction(layout::Direction::Vertical)
+                                .constraints([
+                                    layout::Constraint::Length(2),  // Espaço para o título
+                                    layout::Constraint::Min(10),    // Espaço para a tabela
+                                ])
+                                .split(popup_area);
 
-                with_mutex(&list_state_main, Some("list_state:render_text_box"), |lstate| {
-                    // Retrieve the selected entry (ensure you handle out-of-bounds safely)
-                    let entry = &entries_thread[lstate.get_index()]; // Get the selected `SshConfigEntry`
+                            // Renderizar o título centralizado
+                            let title = widgets::Paragraph::new(
+                                Span::styled(" Available Commands ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+                            )
+                                .style(Style::default())
+                                .alignment(layout::Alignment::Center);
+                            f.render_widget(title, help_layout[0]);
 
-                    // Render the popup with the selected entry
-                    render_popup_table(f, popup_area, entry);
+                            // Renderizar a tabela
+                            let help_block = Block::default()
+                                .borders(widgets::Borders::ALL)
+                                .border_style(Style::default().fg(Color::Blue));
+
+                            let table = Table::new(
+                                rows,
+                                &[
+                                    layout::Constraint::Length(6),  // Largura fixa para comandos (aumentada de 4 para 6)
+                                    layout::Constraint::Min(20),    // Resto do espaço para descrições
+                                ]
+                            )
+                                .block(help_block)
+                                .style(Style::default())
+                                .column_spacing(1);                 // Espaço entre colunas
+
+                            f.render_widget(table, help_layout[1]);
+                        },
+                        _ => {
+                            with_mutex(&list_state_main, Some("list_state:render_text_box"), |lstate| {
+                                let entry = &entries_main[lstate.get_index()];
+                                render_popup_table(f, popup_area, entry);
+                            });
+                        }
+                    }
                 });
             }
         })?;
 
         // Handle events from the channel
-        if let Ok(ui_event) = rx.recv_timeout(Duration::from_secs(0)) {
+        if let Ok(ui_event) = rx.recv_timeout(Duration::from_millis(10)) {
             match ui_event {
                 UIEvent::UpdateSelection(index) => {
                     log::debug!("Updating selection to index: {}", index);
@@ -386,30 +527,58 @@ fn run_tui(entries: Vec<entry::SshConfigEntry>) -> Result<(), Box<dyn std::error
                 }
                 UIEvent::Search => {
                     log::info!("Entering search mode.");
+                    with_mutex(&app_mode, Some("app_mode"), |mode: &mut AppMode| {
+                        log::debug!("Initializing search mode");
+                        *mode = AppMode::Search {
+                            query: String::new(),
+                            cursor_position: 0,
+                            matches: (0..entries.len()).collect(), // Inicialmente, todos os itens são matches
+                            current_match: None,
+                        };
+                    });
                 }
                 UIEvent::Normal => {
                     log::info!("Entering normal mode.");
+                    with_mutex(&app_mode, Some("app_mode"), |mode: &mut AppMode| {
+                        *mode = AppMode::Normal;
+                    });
                     if popup_open_main.load(Ordering::SeqCst) {
                         popup_open_main.store(false, Ordering::SeqCst);
                     }
                 }
                 UIEvent::Exit => {
-                    log::info!("Exit signal received, breaking main loop.");
-                    break; // Break the loop and exit the program
+                    // Só permitir sair com 'q' se não estiver no modo de busca
+                    let should_exit = with_mutex(&app_mode, Some("app_mode"), |mode| {
+                        !mode.is_search()
+                    }).unwrap_or(true);
+
+                    if should_exit {
+                        log::info!("Exit signal received, breaking main loop.");
+                        break;
+                    } else {
+                        log::debug!("Exit signal ignored in search mode");
+                    }
                 }
                 UIEvent::ExitError => {
                     log::info!("Exit signal received with error code.");
-                    process::exit(1);
+                    break;
+                }
+                UIEvent::Help => {
+                    log::info!("Showing help popup.");
+                    with_mutex(&app_mode, Some("app_mode"), |mode| {
+                        *mode = AppMode::Help;
+                    });
+                    if !popup_open_main.load(Ordering::SeqCst) {
+                        popup_open_main.store(true, Ordering::SeqCst);
+                    }
                 }
                 _ => {}
             }
         }
-
-        // Sleep for a short duration to ease the cpu load
-        sleep(Duration::from_millis(10));
     }
 
-    // > The restore terminal will be done by the drop in **TerminalManager**
+    // Restaurar o terminal antes de sair
+    terminal_manager.cleanup()?;
 
     Ok(())
 }
@@ -456,4 +625,78 @@ fn handle_navigation(
 
         new_index // Return the computed index
     }).unwrap_or(0) // Default to 0 if mutex lock fails
+}
+
+fn filter_entries(entries: &[entry::SshConfigEntry], query: &str) -> Vec<usize> {
+    if query.is_empty() {
+        return (0..entries.len()).collect();
+    }
+
+    let query = query.to_lowercase();
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| {
+            // Verifica no Host
+            entry.host.to_lowercase().contains(&query) ||
+            // Verifica apenas no Hostname
+            entry.options.iter()
+                .find(|(key, value)| key.to_lowercase() == "hostname")
+                .map_or(false, |(_, value)| value.to_lowercase().contains(&query))
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+fn handle_search_mode(
+    event: Event,
+    app_mode: &Arc<Mutex<AppMode>>,
+    entries: &[entry::SshConfigEntry],
+) -> Option<UIEvent> {
+    match event {
+        Event::Key(key_event) => match key_event.code {
+            KeyCode::Esc => {
+                log::debug!("ESC pressionado - saindo do modo de busca");
+                with_mutex(app_mode, Some("app_mode"), |mode: &mut AppMode| {
+                    *mode = AppMode::Normal;
+                });
+                Some(UIEvent::Normal)
+            },
+            KeyCode::Char(c) => {
+                // Ignorar apenas a tecla '/' quando já estiver no modo de busca
+                if c == '/' {
+                    return None;
+                }
+                
+                log::debug!("Tecla pressionada: {}", c);
+                with_mutex(app_mode, Some("app_mode"), |mode: &mut AppMode| {
+                    if let AppMode::Search { query, .. } = mode {
+                        let mut new_query = query.clone();
+                        new_query.push(c);
+                        log::debug!("Nova query: {}", new_query);
+                        let matches = filter_entries(entries, &new_query);
+                        log::debug!("Encontrados {} matches", matches.len());
+                        mode.update_search(new_query, matches);
+                    }
+                });
+                None
+            },
+            KeyCode::Backspace => {
+                log::debug!("Backspace pressionado");
+                with_mutex(app_mode, Some("app_mode"), |mode: &mut AppMode| {
+                    if let AppMode::Search { query, .. } = mode {
+                        let mut new_query = query.clone();
+                        new_query.pop();
+                        log::debug!("Query após backspace: {}", new_query);
+                        let matches = filter_entries(entries, &new_query);
+                        log::debug!("Encontrados {} matches", matches.len());
+                        mode.update_search(new_query, matches);
+                    }
+                });
+                None
+            },
+            _ => None,
+        },
+        _ => None,
+    }
 }
